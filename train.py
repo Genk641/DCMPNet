@@ -187,12 +187,40 @@ if __name__ == '__main__':
 	save_dir = os.path.join(args.save_dir, args.exp)
 	os.makedirs(save_dir, exist_ok=True)
 
-	if not os.path.exists(os.path.join(save_dir, args.model+'.pth')):
+	checkpoint_path = os.path.join(save_dir, args.model + '.pth')
+	depth_checkpoint_path = os.path.join(save_dir, args.model_depth + '.pth')
+	resume = os.path.exists(checkpoint_path) and os.path.exists(depth_checkpoint_path)
+	start_epoch = 0
+	best_psnr = 0
+
+	if resume:
+		try:
+			print('==> Resuming from checkpoint: ' + args.model)
+			dehaze_checkpoint = torch.load(checkpoint_path)
+			depth_checkpoint = torch.load(depth_checkpoint_path)
+			network.load_state_dict(dehaze_checkpoint['dehaze_net'])
+			DEPTH_NET.load_state_dict(depth_checkpoint['depth_net'])
+			optimizer_dehaze.load_state_dict(dehaze_checkpoint['dehaze_optimizer'])
+			optimizer_depth.load_state_dict(depth_checkpoint['depth_optimizer'])
+			best_psnr = dehaze_checkpoint['dehaze_net_best_psnr']
+			start_epoch = dehaze_checkpoint['epoch_dehaze'] + 1
+
+			print('Load start_epoch {} ！'.format(start_epoch))
+			print('Load depth_optimizer {} ！'.format(optimizer_dehaze))
+			print('Load depth_optimizer {} ！'.format(optimizer_depth))
+		except RuntimeError as exc:
+			print('==> Checkpoint mismatch, training from scratch.')
+			print(exc)
+			resume = False
+	else:
+		if os.path.exists(checkpoint_path) or os.path.exists(depth_checkpoint_path):
+			print('==> Incomplete checkpoint files found, training from scratch.')
+
+	writer = SummaryWriter(log_dir=os.path.join(args.log_dir, args.exp, args.model))
+
+	if not resume:
 
 		print('==> Start training, current model name: ' + args.model)
-		writer = SummaryWriter(log_dir=os.path.join(args.log_dir, args.exp, args.model))
-
-		best_psnr = 0
 
 		for epoch in tqdm(range(setting['epochs'] + 1)):
 
@@ -233,24 +261,6 @@ if __name__ == '__main__':
 					file.write('\n')
 	else:
 		print('==> 1')
-
-#############################################################################################################################
-		dehaze_checkpoint = torch.load(os.path.join(save_dir, args.model + '.pth'))
-		depth_checkpoint = torch.load(os.path.join(save_dir, args.model_depth + '.pth'))
-		network.load_state_dict(dehaze_checkpoint['dehaze_net'])
-		DEPTH_NET.load_state_dict(depth_checkpoint['depth_net'])
-		optimizer_dehaze.load_state_dict(dehaze_checkpoint['dehaze_optimizer'])
-		optimizer_depth.load_state_dict(depth_checkpoint['depth_optimizer'])
-		best_psnr = dehaze_checkpoint['dehaze_net_best_psnr']
-		start_epoch = dehaze_checkpoint['epoch_dehaze'] + 1
-
-		print('Load start_epoch {} ！'.format(start_epoch))
-		print('Load depth_optimizer {} ！'.format(optimizer_dehaze))
-		print('Load depth_optimizer {} ！'.format(optimizer_depth))
-
-		writer = SummaryWriter(log_dir=os.path.join(args.log_dir, args.exp, args.model))
-		#
-		# best_psnr = 0
 
 		for epoch in tqdm(range(start_epoch, setting['epochs'] + 1)):
 			dehaze_loss, depth_loss = train(train_loader, network, DEPTH_NET, criterion_dehaze, criterion_dehaze_cr, criterion_depth,
