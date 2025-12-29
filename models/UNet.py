@@ -2,6 +2,8 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
+from assm import ASSMBlock
+
 class DoubleConv(nn.Module):
     def __init__(self, in_channels, out_channels):
         super().__init__()
@@ -17,12 +19,22 @@ class DoubleConv(nn.Module):
     def forward(self, x):
         return self.conv(x)
 
+class DoubleConvASSM(nn.Module):
+    def __init__(self, in_channels, out_channels, d_state=16):
+        super().__init__()
+        self.conv = DoubleConv(in_channels, out_channels)
+        self.assm = ASSMBlock(out_channels, d_state=d_state)
+
+    def forward(self, x):
+        x = self.conv(x)
+        return self.assm(x)
+
 class Down(nn.Module):
-    def __init__(self, in_channels, out_channels):
+    def __init__(self, in_channels, out_channels, d_state=16):
         super().__init__()
         self.mpconv = nn.Sequential(
             nn.MaxPool2d(2),
-            DoubleConv(in_channels, out_channels)
+            DoubleConvASSM(in_channels, out_channels, d_state=d_state)
         )
 
     def forward(self, x):
@@ -77,17 +89,17 @@ class RDB(nn.Module):
         return lff + x
 
 class UNet(nn.Module):
-    def __init__(self, n_channels=3, n_classes=3, bilinear=True):
+    def __init__(self, n_channels=3, n_classes=3, bilinear=True, assm_d_state=16):
         super().__init__()
         self.n_channels = n_channels
         self.n_classes = n_classes
         self.bilinear = bilinear
 
-        self.inc = DoubleConv(n_channels, 64)
-        self.down1 = Down(64, 128)
-        self.down2 = Down(128, 256)
-        self.down3 = Down(256, 512)
-        self.down4 = Down(512, 512)
+        self.inc = DoubleConvASSM(n_channels, 64, d_state=assm_d_state)
+        self.down1 = Down(64, 128, d_state=assm_d_state)
+        self.down2 = Down(128, 256, d_state=assm_d_state)
+        self.down3 = Down(256, 512, d_state=assm_d_state)
+        self.down4 = Down(512, 512, d_state=assm_d_state)
         self.up1 = Up(1024, 256, bilinear)
         self.up2 = Up(512, 128, bilinear)
         self.up3 = Up(256, 64, bilinear)
