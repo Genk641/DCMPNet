@@ -29,10 +29,14 @@ parser.add_argument('--data_dir', default='./data', type=str, help='path to data
 parser.add_argument('--log_dir', default='./logs/', type=str, help='path to logs')
 parser.add_argument('--dataset', default='RESIDE-IN', type=str, help='dataset name')
 parser.add_argument('--exp', default='indoor', type=str, help='experiment setting')
-parser.add_argument('--gpu', default='0，1，2，3', type=str, help='GPUs used for training')
+parser.add_argument('--gpu', default='0,1,2,3', type=str, help='GPUs used for training')
 
 args = parser.parse_args()
 os.environ['CUDA_VISIBLE_DEVICES'] = args.gpu
+
+def unwrap_model(model):
+	return model.module if hasattr(model, "module") else model
+
 
 def train(train_loader, network, DEPTH_NET, criterion_dehaze, criterion_dehaze_cr, criterion_depth,
 				   optimizer_dehaze, optimizer_depth, scaler):
@@ -151,6 +155,12 @@ if __name__ == '__main__':
 	DEPTH_NET = DepthNet.DN().cuda()
 	deep_estimate_net = UNet().cuda()
 
+	if torch.cuda.device_count() > 1:
+		print("=> Using DataParallel with {} GPUs".format(torch.cuda.device_count()))
+		network = nn.DataParallel(network)
+		DEPTH_NET = nn.DataParallel(DEPTH_NET)
+		deep_estimate_net = nn.DataParallel(deep_estimate_net)
+
 	criterion_dehaze = nn.L1Loss()
 	criterion_dehaze_cr = crloss()
 	criterion_depth = nn.L1Loss()
@@ -198,8 +208,8 @@ if __name__ == '__main__':
 			print('==> Resuming from checkpoint: ' + args.model)
 			dehaze_checkpoint = torch.load(checkpoint_path)
 			depth_checkpoint = torch.load(depth_checkpoint_path)
-			network.load_state_dict(dehaze_checkpoint['dehaze_net'])
-			DEPTH_NET.load_state_dict(depth_checkpoint['depth_net'])
+			unwrap_model(network).load_state_dict(dehaze_checkpoint['dehaze_net'])
+			unwrap_model(DEPTH_NET).load_state_dict(depth_checkpoint['depth_net'])
 			optimizer_dehaze.load_state_dict(dehaze_checkpoint['dehaze_optimizer'])
 			optimizer_depth.load_state_dict(depth_checkpoint['depth_optimizer'])
 			best_psnr = dehaze_checkpoint['dehaze_net_best_psnr']
@@ -244,8 +254,8 @@ if __name__ == '__main__':
 
 				if avg_psnr > best_psnr:
 					best_psnr = avg_psnr
-					Dehaze_state_dict = {'dehaze_net': network.state_dict(), 'dehaze_optimizer': optimizer_dehaze.state_dict(), 'epoch_dehaze': epoch, 'dehaze_net_best_psnr':best_psnr}
-					depth_state_dict = {'depth_net': DEPTH_NET.state_dict(), 'depth_optimizer': optimizer_depth.state_dict(),'epoch_depth': epoch}
+					Dehaze_state_dict = {'dehaze_net': unwrap_model(network).state_dict(), 'dehaze_optimizer': optimizer_dehaze.state_dict(), 'epoch_dehaze': epoch, 'dehaze_net_best_psnr':best_psnr}
+					depth_state_dict = {'depth_net': unwrap_model(DEPTH_NET).state_dict(), 'depth_optimizer': optimizer_depth.state_dict(),'epoch_depth': epoch}
 					torch.save(Dehaze_state_dict, os.path.join(save_dir, args.model+'.pth'))
 					torch.save(depth_state_dict, os.path.join(save_dir, args.model_depth + '.pth'))
 				print('best_psnr', best_psnr, epoch)
@@ -284,12 +294,12 @@ if __name__ == '__main__':
 
 				if avg_psnr > best_psnr:
 					best_psnr = avg_psnr
-					Dehaze_state_dict = {'dehaze_net': network.state_dict(),
+					Dehaze_state_dict = {'dehaze_net': unwrap_model(network).state_dict(),
 										 'dehaze_optimizer': optimizer_dehaze.state_dict(),
 										 'epoch_dehaze': epoch,
 										 'loss_dehaze': dehaze_loss,
 										 'dehaze_net_best_psnr':best_psnr}
-					depth_state_dict = {'depth_net': DEPTH_NET.state_dict(),
+					depth_state_dict = {'depth_net': unwrap_model(DEPTH_NET).state_dict(),
 										'depth_optimizer': optimizer_depth.state_dict(),
 										'epoch_depth': epoch,
 										'loss_depth': depth_loss}
