@@ -24,6 +24,8 @@ parser.add_argument('--model', default='DIACMPN-dehaze-Indoor', type=str, help='
 parser.add_argument('--model_depth', default='DIACMPN-depth-Indoor', type=str, help='depth model name')
 parser.add_argument('--num_workers', default=16, type=int, help='number of workers')
 parser.add_argument('--no_autocast', action='store_false', default=True, help='disable autocast')
+parser.add_argument('--amp_dtype', default='fp16', choices=['fp16', 'bf16'], help='autocast dtype for AMP')
+parser.add_argument('--batch_size', type=int, default=None, help='override batch size from config')
 parser.add_argument('--save_dir', default='./saved_models/', type=str, help='path to models saving')
 parser.add_argument('--data_dir', default='./data', type=str, help='path to dataset')
 parser.add_argument('--log_dir', default='./logs/', type=str, help='path to logs')
@@ -35,7 +37,7 @@ args = parser.parse_args()
 os.environ['CUDA_VISIBLE_DEVICES'] = args.gpu
 
 def train(train_loader, network, DEPTH_NET, criterion_dehaze, criterion_dehaze_cr, criterion_depth,
-				   optimizer_dehaze, optimizer_depth, scaler):
+				   optimizer_dehaze, optimizer_depth, scaler, autocast_dtype):
 	Dehaze_loss = AverageMeter()
 	Depth_loss = AverageMeter()
 	torch.cuda.empty_cache()
@@ -47,7 +49,7 @@ def train(train_loader, network, DEPTH_NET, criterion_dehaze, criterion_dehaze_c
 		source_img = batch['source'].cuda()
 		target_img = batch['target'].cuda()
 
-		with autocast(args.no_autocast):
+		with autocast(enabled=args.no_autocast, dtype=autocast_dtype):
 			dehaze_output_img, d11, d22, d33 = network(source_img)
 			dehaze_output_img_2_depth_img = DEPTH_NET(dehaze_output_img)
 
@@ -166,13 +168,15 @@ if __name__ == '__main__':
 
 	scheduler_dehaze = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer_dehaze, T_max=setting['epochs'], eta_min=setting['lr_dehaze'] * 1e-2)
 	scheduler_depth = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer_depth, T_max=setting['epochs'], eta_min=setting['lr_depth'] * 1e-2)
-	scaler = GradScaler()
+	autocast_dtype = torch.float16 if args.amp_dtype == 'fp16' else torch.bfloat16
+	scaler = GradScaler(enabled=args.no_autocast and autocast_dtype == torch.float16)
 
 	dataset_dir = os.path.join(args.data_dir, args.dataset)
 	train_dataset = PairLoader(dataset_dir, 'train', 'train',
 								setting['patch_size'], setting['edge_decay'], setting['only_h_flip'])
+	batch_size = args.batch_size if args.batch_size is not None else setting['batch_size']
 	train_loader = DataLoader(train_dataset,
-							  batch_size=setting['batch_size'],
+							  batch_size=batch_size,
 							  shuffle=True,
 							  num_workers=args.num_workers,
 							  pin_memory=True,
@@ -180,7 +184,7 @@ if __name__ == '__main__':
 	val_dataset = PairLoader(dataset_dir, 'test', setting['valid_mode'],
 							  setting['patch_size'])
 	val_loader = DataLoader(val_dataset,
-							batch_size=setting['batch_size'],
+							batch_size=batch_size,
 							num_workers=args.num_workers,
 							pin_memory=True)
 
@@ -225,7 +229,7 @@ if __name__ == '__main__':
 		for epoch in tqdm(range(setting['epochs'] + 1)):
 
 			dehaze_loss, depth_loss = train(train_loader, network, DEPTH_NET, criterion_dehaze, criterion_dehaze_cr, criterion_depth,
-				   optimizer_dehaze, optimizer_depth, scaler)
+				   optimizer_dehaze, optimizer_depth, scaler, autocast_dtype)
 
 			writer.add_scalar('dehaze_train_loss', dehaze_loss, epoch)
 			writer.add_scalar('depth_train_loss', depth_loss, epoch)
@@ -264,7 +268,7 @@ if __name__ == '__main__':
 
 		for epoch in tqdm(range(start_epoch, setting['epochs'] + 1)):
 			dehaze_loss, depth_loss = train(train_loader, network, DEPTH_NET, criterion_dehaze, criterion_dehaze_cr, criterion_depth,
-				   optimizer_dehaze, optimizer_depth, scaler)
+				   optimizer_dehaze, optimizer_depth, scaler, autocast_dtype)
 
 			writer.add_scalar('dehaze_train_loss', dehaze_loss, epoch)
 			writer.add_scalar('depth_train_loss', depth_loss, epoch)
